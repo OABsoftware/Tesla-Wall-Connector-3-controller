@@ -86,7 +86,7 @@ sensor:
       App.register_component(powerSensor);
       powerSensor->set_name("Power export/import");
 
-      auto modbusSensor = new ModbusTcpSensorContainer("192.168.2.237", 1502, 40195, 5000);
+      auto modbusSensor = new ModbusTcpSensorContainer("<THE IP ADDRESS OF YOUR SOLAREDGE INVERTER>", 1502, 40195, 5000);
       App.register_component(modbusSensor);
       modbusSensor->set_name("Modbus status");
       

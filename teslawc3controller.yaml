@@ -1,0 +1,271 @@
+esphome:
+  name: teslawc3controller
+  comment: "Tesla Wall Connector 3 controller"
+  min_version: 2024.6.0
+  includes:
+    - ModbusTcpSensor.h
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/robertklep/esphome-custom-component
+    components: [ custom, custom_component ]
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  framework:
+    type: arduino
+
+wifi:
+  networks:
+    - ssid: <THE SSID OF YOUR WIFI NETWORK>
+      password: <THE PASSWORD OF YOUR WIFI NETWORK>
+
+web_server:
+  port: 80
+
+ota:
+  platform: esphome
+
+
+
+globals:
+  - id: ct1_power_w
+    type: float
+    initial_value: "0.0"
+  - id: ct2_power_w
+    type: float
+    initial_value: "0.0"
+  - id: ct3_power_w
+    type: float
+    initial_value: "0.0"
+  - id: ct4_power_w
+    type: float
+    initial_value: "0.0"
+  - id: ct_total_w
+    type: float
+    initial_value: "0.0"
+
+  - id: ct1_current_a
+    type: float
+    initial_value: "0.0"
+  - id: ct2_current_a
+    type: float
+    initial_value: "0.0"
+  - id: ct3_current_a
+    type: float
+    initial_value: "0.0"
+  - id: ct4_current_a
+    type: float
+    initial_value: "0.0"
+  - id: ct_total_a
+    type: float
+    initial_value: "0.0"
+
+
+
+switch:
+  - platform: template
+    name: "Charge at full power"
+    id: charge_at_full_power
+    optimistic: true
+
+
+
+sensor:
+  - platform: custom
+    lambda: |-
+      auto voltageSensor = new ModbusTcpSensorChild();
+      App.register_component(voltageSensor);
+      voltageSensor->set_name("Grid voltage");
+
+      auto powerSensor = new ModbusTcpSensorChild();
+      App.register_component(powerSensor);
+      powerSensor->set_name("Power export/import");
+
+      auto modbusSensor = new ModbusTcpSensorContainer("192.168.2.237", 1502, 40195, 5000);
+      App.register_component(modbusSensor);
+      modbusSensor->set_name("Modbus status");
+      
+      modbusSensor->voltageSensor = voltageSensor;
+      modbusSensor->powerSensor = powerSensor;
+
+      return {voltageSensor, powerSensor};
+
+    sensors:
+      - name: "Grid voltage"
+        id: grid_voltage
+      - name: "Power export/import"
+        id: external_power_flow
+        on_value:
+          then:
+            - lambda: |-
+                float volts;
+                float watts;
+                float amperes;
+
+                if(id(charge_at_full_power).state)
+                {
+                  volts = 235;
+                  amperes = 16;
+                  watts = volts * amperes;
+                }
+                else
+                {
+                  volts = (isnan(id(grid_voltage).state) || id(grid_voltage).state < 100.0f || id(grid_voltage).state > 240.0f)
+                                  ? 230.0f
+                                  : id(grid_voltage).state;
+
+                  watts = isnan(id(external_power_flow).state)
+                                  ? 0.0f
+                                  : id(external_power_flow).state;
+
+                  amperes = watts / volts;
+                }
+
+                id(ct1_current_a) = id(ct2_current_a) = amperes;
+                id(ct3_current_a) = id(ct4_current_a) = 0;
+                id(ct_total_a) = id(ct1_current_a) + id(ct2_current_a) + id(ct3_current_a) + id(ct4_current_a);
+
+                id(ct1_power_w)   = id(ct2_power_w)   = watts;
+                id(ct3_power_w)   = id(ct4_power_w)   = 0;
+                id(ct_total_w)    = id(ct1_power_w) + id(ct2_power_w) + id(ct3_power_w) + id(ct4_power_w);
+
+
+
+uart:
+  - id: wc_uart
+    tx_pin: GPIO10
+    rx_pin: GPIO17
+    baud_rate: 115200
+    data_bits: 8
+    parity: NONE
+    stop_bits: 1
+
+modbus:
+  - id: wc_mb
+    uart_id: wc_uart
+    role: server
+
+modbus_controller:
+  - id: wc_mb_server
+    modbus_id: wc_mb
+    address: 1
+    server_registers:
+      # Serial / MAC in hex
+      - { address: 1, value_type: U_WORD, read_lambda: 'return 0x3078;' }
+      - { address: 2, value_type: U_WORD, read_lambda: 'return 0x3030;' }
+      - { address: 3, value_type: U_WORD, read_lambda: 'return 0x3030;' }
+      - { address: 4, value_type: U_WORD, read_lambda: 'return 0x3034;' }
+      - { address: 5, value_type: U_WORD, read_lambda: 'return 0x3731;' }
+      - { address: 6, value_type: U_WORD, read_lambda: 'return 0x3442;' }
+      - { address: 7, value_type: U_WORD, read_lambda: 'return 0x3035;' }
+      - { address: 8, value_type: U_WORD, read_lambda: 'return 0x3638;' }
+      - { address: 9, value_type: U_WORD, read_lambda: 'return 0x3631;' }
+      - { address: 10, value_type: U_WORD, read_lambda: 'return 0x0000;' }
+
+      # "1.6.1‑Tesla"
+      - { address: 11, value_type: U_WORD, read_lambda: 'return 0x312E;' }
+      - { address: 12, value_type: U_WORD, read_lambda: 'return 0x362E;' }
+      - { address: 13, value_type: U_WORD, read_lambda: 'return 0x312D;' }
+      - { address: 14, value_type: U_WORD, read_lambda: 'return 0x5465;' }
+      - { address: 15, value_type: U_WORD, read_lambda: 'return 0x736C;' }
+      - { address: 16, value_type: U_WORD, read_lambda: 'return 0x6100;' }
+ 
+      # four reserved words (all 0xFFFF)
+      - { address: 17, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 18, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 19, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 20, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+
+      # "012.00020A.H"
+      - { address: 21, value_type: U_WORD, read_lambda: 'return 0x3031;' }
+      - { address: 22, value_type: U_WORD, read_lambda: 'return 0x322E;' }
+      - { address: 23, value_type: U_WORD, read_lambda: 'return 0x3030;' }
+      - { address: 24, value_type: U_WORD, read_lambda: 'return 0x3032;' }
+      - { address: 25, value_type: U_WORD, read_lambda: 'return 0x3041;' }
+      - { address: 26, value_type: U_WORD, read_lambda: 'return 0x2E48;' }
+      - { address: 27, value_type: U_WORD, read_lambda: 'return 0x0000;' }
+ 
+      # reserved
+      - { address: 28, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+
+      # Meter number "90954"
+      - { address: 29, value_type: U_WORD, read_lambda: 'return 0x3930;' }
+      - { address: 30, value_type: U_WORD, read_lambda: 'return 0x3935;' }
+      - { address: 31, value_type: U_WORD, read_lambda: 'return 0x3400;' }
+
+      # Model? "VAH4810AB0231"
+      - { address: 32, value_type: U_WORD, read_lambda: 'return 0x5641;' }
+      - { address: 33, value_type: U_WORD, read_lambda: 'return 0x4834;' }
+      - { address: 34, value_type: U_WORD, read_lambda: 'return 0x3831;' }
+      - { address: 35, value_type: U_WORD, read_lambda: 'return 0x3041;' }
+      - { address: 36, value_type: U_WORD, read_lambda: 'return 0x4230;' }
+      - { address: 37, value_type: U_WORD, read_lambda: 'return 0x3233;' }
+      - { address: 38, value_type: U_WORD, read_lambda: 'return 0x3100;' }
+
+      # eight more reserved (0xFFFF)
+      - { address: 39, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 40, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 41, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 42, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 43, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 44, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 45, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+      - { address: 46, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
+
+      # Mac "04:71:4B:05:68:61"
+      - { address: 47, value_type: U_WORD, read_lambda: 'return 0x3034;' }
+      - { address: 48, value_type: U_WORD, read_lambda: 'return 0x3A37;' }
+      - { address: 49, value_type: U_WORD, read_lambda: 'return 0x313A;' }
+      - { address: 50, value_type: U_WORD, read_lambda: 'return 0x3442;' }
+      - { address: 51, value_type: U_WORD, read_lambda: 'return 0x3A30;' }
+      - { address: 52, value_type: U_WORD, read_lambda: 'return 0x353A;' }
+      - { address: 53, value_type: U_WORD, read_lambda: 'return 0x3638;' }
+      - { address: 54, value_type: U_WORD, read_lambda: 'return 0x3A36;' }
+      - { address: 55, value_type: U_WORD, read_lambda: 'return 0x3100;' }
+
+      # CT1 power W
+      - { address: 0x88, value_type: FP32, read_lambda: 'return id(ct1_power_w);' }
+
+      # CT2 power W
+      - { address: 0x8A, value_type: FP32, read_lambda: 'return id(ct2_power_w);' }
+
+      # CT3 power W
+      - { address: 0x8C, value_type: FP32, read_lambda: 'return id(ct3_power_w);' }
+
+      # CT4 power W
+      - { address: 0x8E, value_type: FP32, read_lambda: 'return id(ct4_power_w);' }
+
+      # Aggregate watts
+      - { address: 0x90, value_type: FP32, read_lambda: 'return id(ct_total_w);' }
+
+      # Reserved? dit was 0x91, maar dat kan niet kloppen
+      - { address: 0x92, value_type: U_WORD, read_lambda: 'return 0;' }
+
+      # amperes current amps
+      - { address: 0xF4, value_type: FP32, read_lambda: 'return id(ct1_current_a);' }
+
+      # CT2 current amps
+      - { address: 0xF6, value_type: FP32, read_lambda: 'return id(ct2_current_a);' }
+
+      # CT3 current amps
+      - { address: 0xF8, value_type: FP32, read_lambda: 'return id(ct3_current_a);' }
+
+      # CT4 current amps
+      - { address: 0xFA, value_type: FP32, read_lambda: 'return id(ct4_current_a);' }
+
+      # Total amps
+      - { address: 0xFC, value_type: FP32, read_lambda: 'return id(ct_total_a);' }
+
+      # Initialization handshake
+      - { address: 40002, value_type: U_WORD, read_lambda: 'return 0x0001;' }
+      - { address: 40003, value_type: U_WORD, read_lambda: 'return 0x0042;' }
+      - { address: 40004, value_type: U_WORD, read_lambda: 'return 0x4765;' }
+      - { address: 40005, value_type: U_WORD, read_lambda: 'return 0x6E65;' }
+      - { address: 40006, value_type: U_WORD, read_lambda: 'return 0x7261;' }
+      - { address: 40007, value_type: U_WORD, read_lambda: 'return 0x6300;' }
+ 

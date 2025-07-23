@@ -146,9 +146,9 @@ public:
   {
   }
 
-  void forceUpdate(float voltage)
+  void forceUpdate(float rValue)
   {
-    publish_state(voltage);
+    publish_state(rValue);
   }
 };
 

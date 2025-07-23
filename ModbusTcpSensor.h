@@ -26,7 +26,7 @@ class ModbusClient
     const int MODBUS_IDLE = -1;
     const int MODBUS_CONNECT_ERROR = -10;
     const int MODBUS_WAITING_FOR_RESPONSE = -11;
-    const int MODBUS_NO_RESPONSE = -12;
+    const int MODBUS_INVALID_RESPONSE = -12;
     const int MODBUS_INVALID_FNC = -13;
 
 
@@ -44,16 +44,19 @@ class ModbusClient
 
     void beginRequest(WiFiClient& oWifiClient, byte bUnitID, uint16_t uRegistersStartAddress, byte bRegisterCount) 
     {
-      oWifiClient.clear();
+      if(! mbWaitingForResponse)
+      {
+        oWifiClient.clear();
 
-      byte abRequest[] = {0, 1, 0, 0, 0, 6, bUnitID, FNC_READ_REGS, (byte)((uRegistersStartAddress >> 8) & 0xFF), (byte)(uRegistersStartAddress & 0xFF), 0, bRegisterCount};
-      oWifiClient.write(abRequest, sizeof(abRequest));
+        byte abRequest[] = {0, 1, 0, 0, 0, 6, bUnitID, FNC_READ_REGS, (byte)((uRegistersStartAddress >> 8) & 0xFF), (byte)(uRegistersStartAddress & 0xFF), 0, bRegisterCount};
+        oWifiClient.write(abRequest, sizeof(abRequest));
 
-      mbExpectedRegisterCount = bRegisterCount;
-      miExpectedResponseLength = DATA_IX + bRegisterCount * 2;
-      miReceivedResponseLength = 0;
+        mbExpectedRegisterCount = bRegisterCount;
+        miExpectedResponseLength = DATA_IX + bRegisterCount * 2;
+        miReceivedResponseLength = 0;
 
-      mbWaitingForResponse = true;
+        mbWaitingForResponse = true;
+      }
     }
 
 
@@ -61,44 +64,49 @@ class ModbusClient
     {
       if(mbWaitingForResponse)
       {
+        int iRet = MODBUS_WAITING_FOR_RESPONSE;
+
         if(oWifiClient.available() >= miExpectedResponseLength)
         {
-          mbWaitingForResponse = false;
-
           byte abResponseBytes[miExpectedResponseLength];
-          
+
           int iBytesRead = oWifiClient.readBytes(abResponseBytes, miExpectedResponseLength);
           if (iBytesRead < miExpectedResponseLength) 
           {
             oWifiClient.stop();
 
             ESP_LOGD("modbus_tcp", "Invalid response: %d", iBytesRead);
-            return MODBUS_NO_RESPONSE;
+            iRet = MODBUS_INVALID_RESPONSE;
           }
-
-          switch (abResponseBytes[CODE_IX]) 
+          else
           {
-            case FNC_READ_REGS:
-              break;
+            switch (abResponseBytes[CODE_IX]) 
+            {
+              case FNC_READ_REGS:
+                for (int i = 0, j = 0; i < mbExpectedRegisterCount; i++, j += 2) 
+                {
+                  aiRegisterData[i] = (int)(abResponseBytes[DATA_IX + j] << 8 | abResponseBytes[DATA_IX + j + 1]);
+                }
 
-            case (FNC_ERR_FLAG | FNC_READ_REGS):
-              ESP_LOGD("modbus_tcp", "Error response: %d", abResponseBytes[ERR_CODE_IX]);
-              return abResponseBytes[ERR_CODE_IX]; // 0x01, 0x02, 0x03 or 0x11
+                iRet = MODBUS_SUCCESS;
+                break;
 
-            default:
-              ESP_LOGD("modbus_tcp", "Invalid function code: %d", abResponseBytes[CODE_IX]);
-              return MODBUS_INVALID_FNC;
+              case (FNC_ERR_FLAG | FNC_READ_REGS):
+                ESP_LOGD("modbus_tcp", "Error response: %d", abResponseBytes[ERR_CODE_IX]);
+                iRet = abResponseBytes[ERR_CODE_IX]; // 0x01, 0x02, 0x03 or 0x11
+                break;
+
+              default:
+                ESP_LOGD("modbus_tcp", "Invalid function code: %d", abResponseBytes[CODE_IX]);
+                iRet = MODBUS_INVALID_FNC;
+                break;
+            }
           }
 
-          for (int i = 0, j = 0; i < mbExpectedRegisterCount; i++, j += 2) 
-          {
-            aiRegisterData[i] = (int)(abResponseBytes[DATA_IX + j] << 8 | abResponseBytes[DATA_IX + j + 1]);
-          }
-
-          return MODBUS_SUCCESS;
+          mbWaitingForResponse = false;
         }
         
-        return MODBUS_WAITING_FOR_RESPONSE;
+        return iRet;
       }
       
       return MODBUS_IDLE;
@@ -175,7 +183,7 @@ public:
 
     moWifiClient.setTimeout(1000);
     
-    moModbusClient.beginRequest(moWifiClient, 1, 40195, 16);
+    moModbusClient.beginRequest(moWifiClient, 1, register_address_, 16);
   }
 
 

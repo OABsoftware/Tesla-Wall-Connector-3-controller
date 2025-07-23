@@ -65,6 +65,10 @@ globals:
     type: float
     initial_value: "0.0"
 
+  - id: ct_limit
+    type: float
+    initial_value: "16.0"
+
 
 
 switch:
@@ -110,8 +114,7 @@ sensor:
                 if(id(charge_at_full_power).state)
                 {
                   volts = 235;
-                  amperes = 16;
-                  watts = volts * amperes;
+                  amperes = (float)id(ct_limit);
                 }
                 else
                 {
@@ -126,12 +129,15 @@ sensor:
                   amperes = watts / volts;
                 }
 
-                id(ct1_current_a) = id(ct2_current_a) = amperes;
-                id(ct3_current_a) = id(ct4_current_a) = 0;
-                id(ct_total_a) = id(ct1_current_a) + id(ct2_current_a) + id(ct3_current_a) + id(ct4_current_a);
+                amperes = id(ct_limit) - amperes;
+                watts = amperes * volts;
 
-                id(ct1_power_w)   = id(ct2_power_w)   = watts;
-                id(ct3_power_w)   = id(ct4_power_w)   = 0;
+                id(ct1_current_a) = amperes;
+                id(ct2_current_a) = id(ct3_current_a) = id(ct4_current_a) = 0;
+                id(ct_total_a)    = id(ct1_current_a) + id(ct2_current_a) + id(ct3_current_a) + id(ct4_current_a);
+
+                id(ct1_power_w)   = watts;
+                id(ct2_power_w)   = id(ct3_power_w) = id(ct4_power_w) = 0;
                 id(ct_total_w)    = id(ct1_power_w) + id(ct2_power_w) + id(ct3_power_w) + id(ct4_power_w);
 
 
@@ -155,7 +161,7 @@ modbus_controller:
     modbus_id: wc_mb
     address: 1
     server_registers:
-      # Serial / MAC in hex
+      # Serial number / MAC address
       - { address: 1, value_type: U_WORD, read_lambda: 'return 0x3078;' }
       - { address: 2, value_type: U_WORD, read_lambda: 'return 0x3030;' }
       - { address: 3, value_type: U_WORD, read_lambda: 'return 0x3030;' }
@@ -175,7 +181,7 @@ modbus_controller:
       - { address: 15, value_type: U_WORD, read_lambda: 'return 0x736C;' }
       - { address: 16, value_type: U_WORD, read_lambda: 'return 0x6100;' }
  
-      # four reserved words (all 0xFFFF)
+      # Four reserved words (all 0xFFFF)
       - { address: 17, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
       - { address: 18, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
       - { address: 19, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
@@ -190,7 +196,7 @@ modbus_controller:
       - { address: 26, value_type: U_WORD, read_lambda: 'return 0x2E48;' }
       - { address: 27, value_type: U_WORD, read_lambda: 'return 0x0000;' }
  
-      # reserved
+      # Reserved
       - { address: 28, value_type: U_WORD, read_lambda: 'return 0xFFFF;' }
 
       # Meter number "90954"
@@ -243,10 +249,10 @@ modbus_controller:
       # Aggregate watts
       - { address: 0x90, value_type: FP32, read_lambda: 'return id(ct_total_w);' }
 
-      # Reserved? dit was 0x91, maar dat kan niet kloppen
+      # Reserved
       - { address: 0x92, value_type: U_WORD, read_lambda: 'return 0;' }
 
-      # amperes current amps
+      # CT1 current amps
       - { address: 0xF4, value_type: FP32, read_lambda: 'return id(ct1_current_a);' }
 
       # CT2 current amps
@@ -268,4 +274,3 @@ modbus_controller:
       - { address: 40005, value_type: U_WORD, read_lambda: 'return 0x6E65;' }
       - { address: 40006, value_type: U_WORD, read_lambda: 'return 0x7261;' }
       - { address: 40007, value_type: U_WORD, read_lambda: 'return 0x6300;' }
- 
